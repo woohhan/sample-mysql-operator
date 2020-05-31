@@ -1,0 +1,67 @@
+#!/bin/bash
+
+function codegen() {
+  echo "Check go mod verify"
+  gomodsha=$(sha512sum go.mod)
+  gosumsha=$(sha512sum go.sum)
+  go mod verify
+  if [[ $gomodsha != $(sha512sum go.mod) ]]; then
+    echo "ERROR: go.mod was modified by 'go mod verify'"
+    exit 1
+  fi
+  if [[ $gosumsha != $(sha512sum go.sum) ]]; then
+    echo "ERROR: go.sum was modified by 'go mod verify'"
+    exit 1
+  fi
+
+  echo "Check operator-sdk generate"
+  operator-sdk generate crds
+  operator-sdk generate k8s
+  if [[ $(git status --porcelain 2>/dev/null | wc -l) != 0 ]]; then
+    echo "ERROR: The source code was modified by 'operator-sdk generate'"
+    echo "If you haven't committed yet, Please commit and re-run it again"
+    exit 1
+  fi
+}
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+(cd $DIR/.. && 
+case "${1:-}" in
+l)
+  golangci-lint run ./... -v
+;;
+u)
+  go test -v ./pkg/... -ginkgo.v -ginkgo.failFast
+;;
+c)
+  codegen
+;;
+b)
+  operator-sdk build quay.io/woohhan/sample-mysql-operator:canary
+  docker push quay.io/woohhan/sample-mysql-operator:canary
+;;
+ms)
+  minikube start --kubernetes-version=v1.18.3 --driver=docker && sleep 5
+;;
+mc)
+  minikube delete
+;;
+e2e)
+  operator-sdk test local ./e2e --debug --verbose --image quay.io/woohhan/sample-mysql-operator:canary
+;;
+*)
+    echo " $0 [command]
+Test Toolbox
+
+Available Commands:
+  l         Check Lint
+  u         Check Unit Test
+  c         Check Code Generate
+  b         Build Container Image
+  ms        Minikube Start
+  mc        Minikube Clean
+  e2e       Run End to End Test
+" >&2
+    ;;
+esac
+)

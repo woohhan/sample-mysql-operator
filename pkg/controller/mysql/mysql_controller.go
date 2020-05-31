@@ -2,152 +2,99 @@ package mysql
 
 import (
 	"context"
-
 	mysqlv1alpha1 "github.com/woohhan/sample-mysql-operator/pkg/apis/mysql/v1alpha1"
+	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-var log = logf.Log.WithName("controller_mysql")
-
-/**
-* USER ACTION REQUIRED: This is a scaffold file intended for the user to modify with their own Controller
-* business logic.  Delete these comments after modifying this file.*
- */
-
-// Add creates a new MySql Controller and adds it to the Manager. The Manager will set fields on the Controller
-// and Start it when the Manager is Started.
+// Add 는 새로운 MySQL 컨트롤러를 만들고 매니저에 추가합니다.
 func Add(mgr manager.Manager) error {
 	return add(mgr, newReconciler(mgr))
 }
 
-// newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager) reconcile.Reconciler {
-	return &ReconcileMySql{client: mgr.GetClient(), scheme: mgr.GetScheme()}
+	return &ReconcileMySQL{client: mgr.GetClient(), scheme: mgr.GetScheme()}
 }
 
-// add adds a new Controller to mgr with r as the reconcile.Reconciler
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
-	// Create a new controller
 	c, err := controller.New("mysql-controller", mgr, controller.Options{Reconciler: r})
 	if err != nil {
 		return err
 	}
-
-	// Watch for changes to primary resource MySql
-	err = c.Watch(&source.Kind{Type: &mysqlv1alpha1.MySql{}}, &handler.EnqueueRequestForObject{})
-	if err != nil {
+	// 프라이머리 오브젝트 (MySQL)에 변경이 있으면 조정루프에 진입한다.
+	if err := c.Watch(&source.Kind{Type: &mysqlv1alpha1.MySQL{}}, &handler.EnqueueRequestForObject{}); err != nil {
 		return err
 	}
-
-	// TODO(user): Modify this to be the types you create that are owned by the primary resource
-	// Watch for changes to secondary resource Pods and requeue the owner MySql
-	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &mysqlv1alpha1.MySql{},
-	})
-	if err != nil {
+	// 세컨더리 오브젝트 중 서비스에 변경이 있으면 조정 루프에 진입한다
+	if err := c.Watch(&source.Kind{Type: &corev1.Service{}},
+		&handler.EnqueueRequestForOwner{IsController: true, OwnerType: &mysqlv1alpha1.MySQL{}}); err != nil {
 		return err
 	}
-
+	// 세컨더리 오브젝트 중 스테이트풀셋에 변경이 있으면 조정 루프에 진입한다
+	if err := c.Watch(&source.Kind{Type: &v1.StatefulSet{}},
+		&handler.EnqueueRequestForOwner{IsController: true, OwnerType: &mysqlv1alpha1.MySQL{}}); err != nil {
+		return err
+	}
 	return nil
 }
 
-// blank assignment to verify that ReconcileMySql implements reconcile.Reconciler
-var _ reconcile.Reconciler = &ReconcileMySql{}
+// blank assignment to verify that ReconcileMySQL implements reconcile.Reconciler
+var _ reconcile.Reconciler = &ReconcileMySQL{}
 
-// ReconcileMySql reconciles a MySql object
-type ReconcileMySql struct {
-	// This client, initialized using mgr.Client() above, is a split client
-	// that reads objects from the cache and writes to the apiserver
+// ReconcileMySQL reconciles a MySQL object
+type ReconcileMySQL struct {
+	// This client, initialized using mgr.Client() above, is a split client that reads objects from the cache and writes to the apiserver
 	client client.Client
 	scheme *runtime.Scheme
 }
 
-// Reconcile reads that state of the cluster for a MySql object and makes changes based on the state read
-// and what is in the MySql.Spec
-// TODO(user): Modify this Reconcile function to implement your Controller logic.  This example creates
-// a Pod as an example
-// Note:
-// The Controller will requeue the Request to be processed again if the returned error is non-nil or
-// Result.Requeue is true, otherwise upon completion it will remove the work from the queue.
-func (r *ReconcileMySql) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
-	reqLogger.Info("Reconciling MySql")
+// Reconcile 는 클러스터로부터 MySQL 객체를 읽어와서 MySQL.Spec과 실제 클러스터의 상태를 비교해서 싱크를 맞춘다
+func (r *ReconcileMySQL) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+	klog.Infof("[%s] Start Reconcile for mysql", request.NamespacedName)
+	defer func() {
+		klog.Infof("[%s] End Reconcile for mysql", request.NamespacedName)
+	}()
 
-	// Fetch the MySql instance
-	instance := &mysqlv1alpha1.MySql{}
-	err := r.client.Get(context.TODO(), request.NamespacedName, instance)
-	if err != nil {
+	// MySQL 인스턴스를 가져온다
+	mysql := &mysqlv1alpha1.MySQL{}
+	if err := r.client.Get(context.TODO(), request.NamespacedName, mysql); err != nil {
 		if errors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
-			// Return and don't requeue
+			// 인스턴스가 없는 것은 인스턴스가 삭제된 직후에 조정루프에 들어온 경우이다.
+			// 별다른 처리 없이 바로 리턴한다. 만약 추가적인 삭제 작업이 필요하다면 파이널라이즈를 사용해야 한다.
 			return reconcile.Result{}, nil
 		}
-		// Error reading the object - requeue the request.
 		return reconcile.Result{}, err
 	}
 
-	// Define a new Pod object
-	pod := newPodForCR(instance)
-
-	// Set MySql instance as the owner and controller
-	if err := controllerutil.SetControllerReference(instance, pod, r.scheme); err != nil {
+	// MySQL을 위한 컨피그맵이 존재하는지 확인한다
+	if err := r.checkConfigMap(mysql); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	// Check if this Pod already exists
-	found := &corev1.Pod{}
-	err = r.client.Get(context.TODO(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a new Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
-		err = r.client.Create(context.TODO(), pod)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		// Pod created successfully - don't requeue
-		return reconcile.Result{}, nil
-	} else if err != nil {
+	// MySQL 커스텀 리소스가 관리할 각각의 객체에 대해 조정루프를 실행해서 싱크를 맞춘다
+	if err := r.syncService(mysql); err != nil {
 		return reconcile.Result{}, err
 	}
-
-	// Pod already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Pod already exists", "Pod.Namespace", found.Namespace, "Pod.Name", found.Name)
+	if err := r.syncReadService(mysql); err != nil {
+		return reconcile.Result{}, err
+	}
+	if err := r.syncStatefulSet(mysql); err != nil {
+		return reconcile.Result{}, err
+	}
 	return reconcile.Result{}, nil
 }
 
-// newPodForCR returns a busybox pod with the same name/namespace as the cr
-func newPodForCR(cr *mysqlv1alpha1.MySql) *corev1.Pod {
-	labels := map[string]string{
-		"app": cr.Name,
-	}
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name + "-pod",
-			Namespace: cr.Namespace,
-			Labels:    labels,
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    "busybox",
-					Image:   "busybox",
-					Command: []string{"sleep", "3600"},
-				},
-			},
-		},
-	}
+func (r *ReconcileMySQL) checkConfigMap(mysql *mysqlv1alpha1.MySQL) error {
+	config := &corev1.ConfigMap{}
+	return r.client.Get(context.TODO(), types.NamespacedName{Namespace: mysql.Namespace, Name: mysql.Name}, config)
 }
