@@ -1,0 +1,61 @@
+name: Main
+on:
+  push:
+  pull_request:
+jobs:
+  static:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: lint test
+        uses: golangci/golangci-lint-action@v1
+        with:
+          version: v1.26
+      - name: unit test
+        run: hack/tbox u
+      - name: codegen test
+        run: hack/tbox c
+  e2e:
+    runs-on: ubuntu-18.04
+    needs: static
+    steps:
+      - uses: actions/checkout@v2
+      - uses: azure/docker-login@v1
+        with:
+          login-server: quay.io
+          username: woohhan+robot
+          password: ${{ secrets.QuayPassword }}
+      - name: build
+        run: |
+          curl -Lo operator-sdk https://github.com/operator-framework/operator-sdk/releases/download/v0.18.0/operator-sdk-v0.18.0-x86_64-linux-gnu
+          chmod +x operator-sdk && sudo mv operator-sdk /usr/local/bin
+          hack/tbox b
+      - name: minikube
+        run: |
+          curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          chmod +x minikube
+          sudo mkdir -p /usr/local/bin/
+          sudo install minikube /usr/local/bin/
+          sudo snap install kubectl --classic
+          hack/tbox ms
+      - name: e2e
+        run: |
+          hack/dbox ac
+          hack/tbox e2e
+  deploy:
+    runs-on: ubuntu-18.04
+    needs: e2e
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v2
+      - uses: azure/docker-login@v1
+        with:
+          login-server: quay.io
+          username: woohhan+robot
+          password: ${{ secrets.QuayPassword }}
+      - name: push
+        run: |
+          curl -Lo operator-sdk https://github.com/operator-framework/operator-sdk/releases/download/v0.18.0/operator-sdk-v0.18.0-x86_64-linux-gnu
+          chmod +x operator-sdk && sudo mv operator-sdk /usr/local/bin
+          hack/tbox b
+          docker push quay.io/woohhan/sample-mysql-operator:latest

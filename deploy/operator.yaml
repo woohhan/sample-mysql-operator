@@ -15,8 +15,7 @@ spec:
       serviceAccountName: sample-mysql-operator
       containers:
         - name: sample-mysql-operator
-          # Replace this with the built image name
-          image: quay.io/woohhan/sample-mysql-operator:canary
+          image: quay.io/woohhan/sample-mysql-operator:latest
           command:
           - sample-mysql-operator
           imagePullPolicy: Always
