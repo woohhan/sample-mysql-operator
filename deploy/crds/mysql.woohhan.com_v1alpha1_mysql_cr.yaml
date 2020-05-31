@@ -1,0 +1,7 @@
+apiVersion: mysql.woohhan.com/v1alpha1
+kind: MySql
+metadata:
+  name: example-mysql
+spec:
+  # Add fields here
+  size: 3
